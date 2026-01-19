@@ -177,15 +177,24 @@ choose_project_name() {
             echo ""
             echo "  1) Anderen Namen wählen"
             echo "  2) Bestehendes Projekt öffnen"
+            echo "  3) ECS-System aktualisieren"
             echo ""
             local choice
             choice=$(ask_question "Was möchtest du tun?" "1")
 
-            if [ "$choice" = "2" ]; then
-                USE_EXISTING_LOCAL=true
-                return 0
-            fi
-            continue
+            case "$choice" in
+                2)
+                    USE_EXISTING_LOCAL=true
+                    return 0
+                    ;;
+                3)
+                    UPDATE_ECS=true
+                    return 0
+                    ;;
+                *)
+                    continue
+                    ;;
+            esac
         fi
 
         # Prüfen ob GitHub-Repo bereits existiert
@@ -218,6 +227,66 @@ clone_existing_repo() {
     "$GH_BIN" repo clone "$REPO_NAME" "$PROJECT_DIR"
 
     print_success "Repository geklont"
+}
+
+update_ecs_system() {
+    local project_dir="$1"
+
+    # Warnung anzeigen
+    echo ""
+    print_warning "Das ECS-System wird aktualisiert."
+    echo ""
+    echo "  Folgende Ordner werden überschrieben:"
+    echo "    - _bmad/ecs/"
+    echo "    - .claude/commands/ecs/"
+    echo "    - docs/"
+    echo ""
+    echo -e "  ${YELLOW}Achtung:${NC} Eigene Änderungen an ECS-Agenten und"
+    echo "           ECS-Workflows gehen dabei verloren!"
+    echo ""
+    echo "  Deine Daten bleiben erhalten:"
+    echo "    - _bmad/_memory/"
+    echo "    - inbox/, content/, output/"
+    echo ""
+
+    if ! confirm "Fortfahren?"; then
+        echo "Abgebrochen."
+        return 1
+    fi
+
+    # Temporäres Verzeichnis
+    local tmp_dir=$(mktemp -d)
+
+    print_step "Lade neueste ECS-Version..."
+    "$GH_BIN" repo clone gameplanXXL/ecs-studio "$tmp_dir" -- --depth 1 2>/dev/null
+
+    print_step "Aktualisiere ECS-System..."
+
+    # Alte Verzeichnisse entfernen
+    rm -rf "$project_dir/_bmad/ecs"
+    rm -rf "$project_dir/.claude/commands/ecs"
+    rm -rf "$project_dir/docs"
+
+    # Neue Verzeichnisse kopieren
+    cp -r "$tmp_dir/_bmad/ecs" "$project_dir/_bmad/"
+    mkdir -p "$project_dir/.claude/commands"
+    cp -r "$tmp_dir/.claude/commands/ecs" "$project_dir/.claude/commands/"
+    cp -r "$tmp_dir/docs" "$project_dir/"
+
+    # Aufräumen
+    rm -rf "$tmp_dir"
+
+    print_success "ECS-System aktualisiert"
+
+    # Git-Commit
+    print_step "Committe Änderungen..."
+    cd "$project_dir"
+    git add -A
+    git commit -m "[ECS] System: Update auf neueste Version
+
+Co-Authored-By: Claude <noreply@anthropic.com>" 2>/dev/null || print_warning "Keine Änderungen zum Committen"
+
+    print_success "Fertig!"
 }
 
 create_new_project() {
@@ -380,7 +449,9 @@ main() {
     check_access
     choose_project_name
 
-    if [ "$USE_EXISTING_LOCAL" = true ]; then
+    if [ "$UPDATE_ECS" = true ]; then
+        update_ecs_system "$PROJECT_DIR"
+    elif [ "$USE_EXISTING_LOCAL" = true ]; then
         echo ""
         print_success "Nutze bestehendes Projekt: $PROJECT_DIR"
     elif [ "$USE_EXISTING_REMOTE" = true ]; then
