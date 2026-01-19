@@ -128,6 +128,16 @@ get_other_projects() {
 # ============================================
 
 check_setup() {
+    # Prüfen ob Claude Code installiert ist
+    if ! command -v claude &>/dev/null; then
+        print_error "Claude Code ist nicht installiert."
+        echo ""
+        echo "Bitte installiere Claude Code mit:"
+        echo '  curl -fsSL https://claude.ai/install.sh | bash'
+        echo ""
+        exit 1
+    fi
+
     # Prüfen ob gh installiert ist
     if [ ! -x "$GH_BIN" ]; then
         print_error "GitHub CLI nicht gefunden."
