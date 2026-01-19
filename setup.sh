@@ -99,6 +99,30 @@ confirm() {
     esac
 }
 
+# Andere Projekte im ECS_HOME finden (außer dem aktuellen)
+get_other_projects() {
+    local current_project="$1"
+    local projects=()
+
+    # Alle Unterverzeichnisse in ECS_HOME durchsuchen
+    for dir in "$ECS_HOME"/*/; do
+        # Verzeichnisname extrahieren
+        local name=$(basename "$dir")
+
+        # Versteckte Ordner und aktuelles Projekt überspringen
+        [[ "$name" == .* ]] && continue
+        [[ "$name" == "$current_project" ]] && continue
+
+        # Prüfen ob es ein ECS-Projekt ist (hat _bmad/ecs Ordner)
+        if [ -d "$dir/_bmad/ecs" ]; then
+            projects+=("$name")
+        fi
+    done
+
+    # Projekte zurückgeben (eines pro Zeile)
+    printf '%s\n' "${projects[@]}"
+}
+
 # ============================================
 # Prüfungen
 # ============================================
@@ -177,7 +201,17 @@ choose_project_name() {
             echo ""
             echo "  1) Anderen Namen wählen"
             echo "  2) Bestehendes Projekt öffnen"
-            echo "  3) ECS-System aktualisieren"
+            echo "  3) ECS-System aktualisieren (von GitHub)"
+
+            # Prüfen ob andere Projekte existieren
+            local other_projects
+            other_projects=$(get_other_projects "$PROJECT_NAME")
+            local has_other_projects=false
+            if [ -n "$other_projects" ]; then
+                has_other_projects=true
+                echo "  4) ECS-System von anderem Projekt kopieren"
+            fi
+
             echo ""
             local choice
             choice=$(ask_question "Was möchtest du tun?" "1")
@@ -190,6 +224,36 @@ choose_project_name() {
                 3)
                     UPDATE_ECS=true
                     return 0
+                    ;;
+                4)
+                    if [ "$has_other_projects" = true ]; then
+                        # Andere Projekte auflisten
+                        echo ""
+                        echo "  Verfügbare Projekte:"
+                        local i=1
+                        local project_array=()
+                        while IFS= read -r proj; do
+                            echo "    $i) $proj"
+                            project_array+=("$proj")
+                            ((i++))
+                        done <<< "$other_projects"
+                        echo ""
+
+                        local proj_choice
+                        proj_choice=$(ask_question "Von welchem Projekt kopieren?" "1")
+
+                        # Validieren und Projekt auswählen
+                        if [[ "$proj_choice" =~ ^[0-9]+$ ]] && [ "$proj_choice" -ge 1 ] && [ "$proj_choice" -le "${#project_array[@]}" ]; then
+                            COPY_ECS=true
+                            COPY_SOURCE_PROJECT="${project_array[$((proj_choice-1))]}"
+                            return 0
+                        else
+                            print_warning "Ungültige Auswahl."
+                            continue
+                        fi
+                    else
+                        continue
+                    fi
                     ;;
                 *)
                     continue
@@ -283,6 +347,63 @@ update_ecs_system() {
     cd "$project_dir"
     git add -A
     git commit -m "[ECS] System: Update auf neueste Version
+
+Co-Authored-By: Claude <noreply@anthropic.com>" 2>/dev/null || print_warning "Keine Änderungen zum Committen"
+
+    print_success "Fertig!"
+}
+
+copy_ecs_system() {
+    local target_dir="$1"
+    local source_project="$2"
+    local source_dir="$ECS_HOME/$source_project"
+
+    # Warnung anzeigen
+    echo ""
+    print_warning "Das ECS-System wird von '$source_project' kopiert."
+    echo ""
+    echo "  Folgende Ordner werden überschrieben:"
+    echo "    - _bmad/ecs/"
+    echo "    - .claude/commands/ecs/"
+    echo "    - docs/"
+    echo ""
+    echo -e "  ${YELLOW}Achtung:${NC} Eigene Änderungen an ECS-Agenten und"
+    echo "           ECS-Workflows gehen dabei verloren!"
+    echo ""
+    echo "  Deine Daten bleiben erhalten:"
+    echo "    - _bmad/_memory/"
+    echo "    - inbox/, content/, output/"
+    echo ""
+
+    if ! confirm "Fortfahren?"; then
+        echo "Abgebrochen."
+        return 1
+    fi
+
+    print_step "Kopiere ECS-System von '$source_project'..."
+
+    # Alte Verzeichnisse entfernen (saubere Kopie)
+    rm -rf "$target_dir/_bmad/ecs"
+    rm -rf "$target_dir/.claude/commands/ecs"
+    rm -rf "$target_dir/docs"
+
+    # Neue Verzeichnisse kopieren
+    cp -r "$source_dir/_bmad/ecs" "$target_dir/_bmad/"
+    mkdir -p "$target_dir/.claude/commands"
+    if [ -d "$source_dir/.claude/commands/ecs" ]; then
+        cp -r "$source_dir/.claude/commands/ecs" "$target_dir/.claude/commands/"
+    fi
+    if [ -d "$source_dir/docs" ]; then
+        cp -r "$source_dir/docs" "$target_dir/"
+    fi
+
+    print_success "ECS-System kopiert"
+
+    # Git-Commit
+    print_step "Committe Änderungen..."
+    cd "$target_dir"
+    git add -A
+    git commit -m "[ECS] System: Kopiert von Projekt '$source_project'
 
 Co-Authored-By: Claude <noreply@anthropic.com>" 2>/dev/null || print_warning "Keine Änderungen zum Committen"
 
@@ -451,6 +572,8 @@ main() {
 
     if [ "$UPDATE_ECS" = true ]; then
         update_ecs_system "$PROJECT_DIR"
+    elif [ "$COPY_ECS" = true ]; then
+        copy_ecs_system "$PROJECT_DIR" "$COPY_SOURCE_PROJECT"
     elif [ "$USE_EXISTING_LOCAL" = true ]; then
         echo ""
         print_success "Nutze bestehendes Projekt: $PROJECT_DIR"
